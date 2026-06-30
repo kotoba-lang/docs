@@ -1,17 +1,12 @@
 # docs
 
-Portable CLJC document workspace model for `docs.gftd.ai`.
+[![CI](https://github.com/kotoba-lang/docs/actions/workflows/ci.yml/badge.svg)](https://github.com/kotoba-lang/docs/actions/workflows/ci.yml)
 
-The core is plain EDN: documents contain ordered blocks, blocks can cite
-workspace objects, and hosts decide how to persist or render them.
+Portable CLJC model for kotoba-lang/docs.
 
-```clojure
-(require '[docs.model :as d])
+Pages editor: https://kotoba-lang.github.io/docs/
 
-(-> (d/document "memo" {:title "Strategy memo"})
-    (d/add-block (d/heading "h1" 1 "Strategy"))
-    (d/add-block (d/paragraph "p1" "One shared graph for docs, slides, drive, and sheets.")))
-```
+The Pages UI is local to kotoba-lang and does not redirect to external hosts.
 
 ## Test
 
