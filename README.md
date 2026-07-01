@@ -20,5 +20,5 @@ The shared wire format is Kotoba Transit JSON via
 ## Test
 
 ```bash
-clojure -X:test
+clojure -M:test
 ```
