@@ -10,9 +10,10 @@
 
 (require '[clojure.test :as t]
          'docs.docx-test
+         'docs.html-test
          'docs.markdown-test
          'docs.model-test)
 
-(let [{:keys [fail error]} (t/run-tests 'docs.docx-test 'docs.markdown-test 'docs.model-test)]
+(let [{:keys [fail error]} (t/run-tests 'docs.docx-test 'docs.html-test 'docs.markdown-test 'docs.model-test)]
   (when (pos? (+ (or fail 0) (or error 0)))
     (js/process.exit 1)))

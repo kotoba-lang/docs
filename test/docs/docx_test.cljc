@@ -273,3 +273,11 @@
                {:docs/blocks [{:docs/kind :heading :docs/level "three"}]}
                {:docs/comments []} {:docs/suggestions nil}]]
     (is (vector? (docx/unexpressed doc)) (pr-str doc))))
+
+(deftest a-heading-level-that-is-not-a-number-does-not-throw
+  (let [doc (-> (d/document "d" {:docs/title "T"})
+                (d/add-block {:docs/id "h" :docs/kind :heading
+                              :docs/level "two" :docs/text "見出し"}))]
+    (is (string? (get (docx/docx-files doc) "word/document.xml")))
+    (is (str/includes? (get (docx/docx-files doc) "word/document.xml")
+                       "w:val=\"Heading1\""))))

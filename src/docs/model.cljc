@@ -16,6 +16,21 @@
 (defn block [kind id attrs]
   (merge {:docs/id id :docs/kind kind} attrs))
 
+(defn heading-level
+  "A block's heading level as a number between 1 and 6.
+
+  Every writer clamps — Markdown, Word and HTML all have six — and every one
+  of them did it with `(max 1 (min 6 (or level 1)))`, which throws when the
+  level is not a number. A hand-edited payload can carry `\"two\"`, nothing
+  validates the type, and the result was a 500 from the exporter rather than
+  a heading.
+
+  Here rather than three times over: it is a fact about a heading, not about
+  a file format."
+  [block]
+  (let [level (:docs/level block)]
+    (if (number? level) (max 1 (min 6 (long level))) 1)))
+
 (defn heading [id level text]
   (block :heading id {:docs/level level :docs/text text}))
 

@@ -49,3 +49,16 @@
                    {"docs/type" 7}
                    "not-a-document-at-all"]]
     (is (some? (wire/rehydrate-document payload)) (str "survived: " (pr-str payload)))))
+
+(deftest a-heading-level-that-is-not-a-number-is-one
+  ;; Every writer clamps to six and every one of them did it with
+  ;; `(max 1 (min 6 …))`, which throws on a string. A hand-edited payload
+  ;; can carry "two", nothing validates the type, and the result was a 500
+  ;; from the exporter rather than a heading.
+  (is (= 2 (d/heading-level {:docs/level 2})))
+  (is (= 6 (d/heading-level {:docs/level 9})))
+  (is (= 1 (d/heading-level {:docs/level 0})))
+  (is (= 1 (d/heading-level {:docs/level "two"})))
+  (is (= 1 (d/heading-level {:docs/level nil})))
+  (is (= 1 (d/heading-level {})))
+  (is (= 3 (d/heading-level {:docs/level 3.7})) "truncated, not rejected"))
