@@ -1,0 +1,451 @@
+(ns docs.docx
+  "A document as a .docx, and back.
+
+  ## Where this lives
+
+  The same arrangement as `slides.pptx` and `sheets.xlsx`: `ooxml` supplies
+  the OPC vocabulary — content types, relationships, the package — and knows
+  nothing about documents. It already anticipated this one, returning
+  `:docx` for a `word/` prefix. A `wordprocessingml` repository to hold what
+  turned out to be one namespace would have been a repository for the
+  symmetry of it.
+
+  ## Structure rather than appearance
+
+  A heading is written as a paragraph carrying `w:pStyle Heading1`, not as
+  bold 18pt text. Word renders both the same way and only one of them can be
+  read back as a heading, collapsed into an outline, or restyled by whoever
+  receives it. The same choice runs through: a list is `w:numPr` and not a
+  line beginning with `-`, a table is `w:tbl` and not aligned spaces.
+
+  That means writing `styles.xml` and `numbering.xml`, which a document with
+  no styles does not need and a document anyone opens does. Both are small
+  and both are here.
+
+  ## What a round trip keeps
+
+  Block kind, order, text, heading level, list ordering, and table cells.
+  What it does not keep is block ids — .docx has nowhere to put them, the
+  same as Markdown — so `read` regenerates them and the tests say so rather
+  than comparing whole documents.
+
+  Comments and suggestions are not written. Word has both, and they are not
+  the same objects: a `docs` comment anchors to a block id, which is exactly
+  what does not survive the trip.
+
+  ## Reading meets more than writing produces
+
+  A .docx from Word has `w:rPr` runs, `w:proofErr` markers, bookmarks,
+  section properties, and paragraphs split into a dozen runs by nothing more
+  than a spell-checker. The reader concatenates every `w:t` under a
+  paragraph for that reason: taking the first would truncate most real
+  documents to their first few characters."
+  (:refer-clojure :exclude [read])
+  (:require [clojure.string :as str]
+            [docs.model :as model]
+            [ooxml.core :as ooxml]
+            [xml.parse :as xml])
+  #?(:clj (:import [java.io ByteArrayInputStream ByteArrayOutputStream]
+                   [java.util.zip ZipEntry ZipInputStream ZipOutputStream])))
+
+(def ^:private main-ns
+  "http://schemas.openxmlformats.org/wordprocessingml/2006/main")
+(def ^:private rels-ns
+  "http://schemas.openxmlformats.org/officeDocument/2006/relationships")
+
+(def ^:private style-for
+  "The `w:pStyle` each block kind is written with.
+
+  Built-in Word style ids, so a document opened somewhere with its own
+  template picks up that template's heading rather than this file's idea of
+  one. `styles.xml` defines them anyway, because a style id referring to
+  nothing is a paragraph with no style at all."
+  {:quote "Quote" :code "HTMLPreformatted"})
+
+;; ── writing ─────────────────────────────────────────────────────────────────
+
+(defn- run
+  "One `w:r`, the thing that actually holds text.
+
+  `xml:space=\"preserve\"` on every one: without it a leading or trailing
+  space is dropped, and a document reassembled from runs loses the spaces
+  between them."
+  [text]
+  (str "<w:r><w:t xml:space=\"preserve\">" (ooxml/xml-esc (str text)) "</w:t></w:r>"))
+
+(defn- para
+  "One `w:p` with an optional style and numbering."
+  ([text] (para text nil nil))
+  ([text style] (para text style nil))
+  ([text style num-id]
+   (let [props (str (when style (str "<w:pStyle w:val=\"" style "\"/>"))
+                    (when num-id
+                      (str "<w:numPr><w:ilvl w:val=\"0\"/>"
+                           "<w:numId w:val=\"" num-id "\"/></w:numPr>")))]
+     (str "<w:p>"
+          (when (seq props) (str "<w:pPr>" props "</w:pPr>"))
+          (run text)
+          "</w:p>"))))
+
+(defn- table-xml
+  "One `w:tbl`.
+
+  Every row is padded to the widest, because a `w:tr` with fewer cells than
+  its neighbours is a table Word draws with a ragged edge — and the model
+  allows ragged rows, so this is input rather than an impossibility."
+  [rows]
+  (let [width (apply max 0 (map count rows))]
+    (str "<w:tbl>"
+         "<w:tblPr><w:tblStyle w:val=\"TableGrid\"/>"
+         "<w:tblW w:w=\"0\" w:type=\"auto\"/></w:tblPr>"
+         (apply str
+                (for [row rows]
+                  (str "<w:tr>"
+                       (apply str
+                              (for [cell (take width (concat row (repeat "")))]
+                                (str "<w:tc><w:tcPr><w:tcW w:w=\"0\" w:type=\"auto\"/>"
+                                     "</w:tcPr>"
+                                     (para (str cell))
+                                     "</w:tc>")))
+                       "</w:tr>")))
+         "</w:tbl>")))
+
+(defn- block-xml [b]
+  (let [text (str (:docs/text b))]
+    (case (:docs/kind b)
+      :heading (para text (str "Heading" (max 1 (min 6 (or (:docs/level b) 1)))))
+      :paragraph (para text)
+      :quote (para text (style-for :quote))
+      ;; Each line its own paragraph: a `w:t` containing a newline shows the
+      ;; newline as a space, so a code block written as one run arrives as
+      ;; one long line.
+      :code (apply str (map #(para % (style-for :code))
+                            (str/split-lines (if (str/blank? text) " " text))))
+      :list (apply str (map #(para (str %) "ListParagraph"
+                                   (if (:docs/ordered? b) 2 1))
+                            (:docs/items b)))
+      :table (when (seq (:docs/rows b)) (table-xml (:docs/rows b)))
+      (:table-ref :file-ref :deck-ref)
+      ;; The same spelling Markdown uses, for the same reason: there is no
+      ;; .docx for "a document in this Drive", so it becomes text that says
+      ;; what it points at and reads back as the block it was.
+      (para (str "[" (name (:docs/kind b)) "](drive:" (:docs/target b) ")"))
+      (para text))))
+
+(defn- styles-xml []
+  (str "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+       "<w:styles xmlns:w=\"" main-ns "\">"
+       (apply str
+              (for [level (range 1 7)]
+                (str "<w:style w:type=\"paragraph\" w:styleId=\"Heading" level "\">"
+                     "<w:name w:val=\"heading " level "\"/>"
+                     "<w:basedOn w:val=\"Normal\"/><w:qFormat/>"
+                     "<w:pPr><w:outlineLvl w:val=\"" (dec level) "\"/></w:pPr>"
+                     "<w:rPr><w:b/><w:sz w:val=\"" (- 32 (* 2 level)) "\"/></w:rPr>"
+                     "</w:style>")))
+       "<w:style w:type=\"paragraph\" w:styleId=\"Normal\">"
+       "<w:name w:val=\"Normal\"/><w:qFormat/></w:style>"
+       "<w:style w:type=\"paragraph\" w:styleId=\"Quote\">"
+       "<w:name w:val=\"Quote\"/><w:basedOn w:val=\"Normal\"/><w:qFormat/>"
+       "<w:pPr><w:ind w:left=\"720\"/></w:pPr><w:rPr><w:i/></w:rPr></w:style>"
+       "<w:style w:type=\"paragraph\" w:styleId=\"HTMLPreformatted\">"
+       "<w:name w:val=\"HTML Preformatted\"/><w:basedOn w:val=\"Normal\"/>"
+       "<w:rPr><w:rFonts w:ascii=\"Consolas\" w:hAnsi=\"Consolas\"/></w:rPr></w:style>"
+       "<w:style w:type=\"paragraph\" w:styleId=\"ListParagraph\">"
+       "<w:name w:val=\"List Paragraph\"/><w:basedOn w:val=\"Normal\"/>"
+       "<w:qFormat/></w:style>"
+       "<w:style w:type=\"table\" w:styleId=\"TableGrid\">"
+       "<w:name w:val=\"Table Grid\"/></w:style>"
+       "</w:styles>"))
+
+(defn- numbering-xml
+  "Two lists: a bulleted one and a numbered one.
+
+  `numId` 1 and 2, which `block-xml` writes. A `w:numPr` naming a `numId`
+  that `numbering.xml` does not define is a list Word shows with no marker
+  at all — indistinguishable from an indented paragraph."
+  []
+  (str "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+       "<w:numbering xmlns:w=\"" main-ns "\">"
+       "<w:abstractNum w:abstractNumId=\"1\"><w:lvl w:ilvl=\"0\">"
+       "<w:numFmt w:val=\"bullet\"/><w:lvlText w:val=\"•\"/>"
+       "<w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr>"
+       "</w:lvl></w:abstractNum>"
+       "<w:abstractNum w:abstractNumId=\"2\"><w:lvl w:ilvl=\"0\">"
+       "<w:start w:val=\"1\"/><w:numFmt w:val=\"decimal\"/>"
+       "<w:lvlText w:val=\"%1.\"/>"
+       "<w:pPr><w:ind w:left=\"720\" w:hanging=\"360\"/></w:pPr>"
+       "</w:lvl></w:abstractNum>"
+       "<w:num w:numId=\"1\"><w:abstractNumId w:val=\"1\"/></w:num>"
+       "<w:num w:numId=\"2\"><w:abstractNumId w:val=\"2\"/></w:num>"
+       "</w:numbering>"))
+
+(defn- document-xml [doc]
+  (let [blocks (:docs/blocks doc)
+        opens-with-h1? (and (seq blocks)
+                            (= :heading (:docs/kind (first blocks)))
+                            (= 1 (:docs/level (first blocks))))
+        title (:docs/title doc)]
+    (str "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+         "<w:document xmlns:w=\"" main-ns "\" xmlns:r=\"" rels-ns "\"><w:body>"
+         ;; The title as a heading unless the document already opens with
+         ;; one — otherwise a document whose first block is its title comes
+         ;; out with the title twice, which is what a naive export does and
+         ;; what a reader notices immediately.
+         (when (and (not (str/blank? (str title))) (not opens-with-h1?))
+           (para title "Heading1"))
+         (apply str (keep block-xml blocks))
+         ;; An empty body is a .docx Word opens and shows nothing in, which
+         ;; is correct; a `w:sectPr` is what tells it the page size.
+         "<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>"
+         "<w:pgMar w:top=\"1134\" w:right=\"1134\" w:bottom=\"1134\" w:left=\"1134\"/>"
+         "</w:sectPr>"
+         "</w:body></w:document>")))
+
+(defn docx-files
+  "Every part of the .docx, as path → text.
+
+  Separate from the zipping so the package can be inspected and asserted
+  without a host that has one."
+  [doc]
+  {"[Content_Types].xml"
+   (ooxml/content-types-xml
+    [(ooxml/default-content-type "rels" (str "application/vnd.openxmlformats-package."
+                                             "relationships+xml"))
+     (ooxml/default-content-type "xml" "application/xml")
+     (ooxml/override-content-type
+      "/word/document.xml"
+      (str "application/vnd.openxmlformats-officedocument."
+           "wordprocessingml.document.main+xml"))
+     (ooxml/override-content-type
+      "/word/styles.xml"
+      (str "application/vnd.openxmlformats-officedocument."
+           "wordprocessingml.styles+xml"))
+     (ooxml/override-content-type
+      "/word/numbering.xml"
+      (str "application/vnd.openxmlformats-officedocument."
+           "wordprocessingml.numbering+xml"))])
+
+   "_rels/.rels"
+   (ooxml/relationships-xml
+    [(ooxml/relationship {:id "rId1"
+                          :type (str rels-ns "/officeDocument")
+                          :target "word/document.xml"})])
+
+   "word/_rels/document.xml.rels"
+   (ooxml/relationships-xml
+    [(ooxml/relationship {:id "rId1" :type (str rels-ns "/styles")
+                          :target "styles.xml"})
+     (ooxml/relationship {:id "rId2" :type (str rels-ns "/numbering")
+                          :target "numbering.xml"})])
+
+   "word/document.xml" (document-xml doc)
+   "word/styles.xml" (styles-xml)
+   "word/numbering.xml" (numbering-xml)})
+
+(defn package [doc]
+  (ooxml/package (docx-files doc)))
+
+#?(:clj
+   (defn docx-bytes
+     "The .docx as a byte array."
+     [doc]
+     (let [out (ByteArrayOutputStream.)]
+       (with-open [zip (ZipOutputStream. out)]
+         (doseq [[path text] (sort (docx-files doc))]
+           (.putNextEntry zip (ZipEntry. ^String path))
+           (.write zip (.getBytes ^String text "UTF-8"))
+           (.closeEntry zip)))
+       (.toByteArray out))))
+
+;; ── reading ─────────────────────────────────────────────────────────────────
+
+(defn- local-name
+  "A tag without its namespace prefix.
+
+  WordprocessingML puts `w:` on everything, so `xml.parse` returns `:w/p`
+  where SpreadsheetML gives a bare `:c` — which is why `sheets.xlsx` could
+  match tags directly and this cannot. Matching on the local name also means
+  a producer that binds the main namespace to some other prefix is read
+  rather than silently returning an empty document."
+  [el]
+  (when (vector? el) (name (xml/el-tag el))))
+
+(defn- attr-named
+  "An attribute by local name, whatever prefix it carries.
+
+  The attribute is written `w:val` and `xml.parse` keeps keys exactly as
+  they appear, so asking for `\"val\"` finds nothing — and finding nothing
+  here means a heading reads back as a paragraph, which is the failure this
+  namespace exists to avoid."
+  [el n]
+  (let [attrs (when (vector? el) (first (filter map? (rest el))))]
+    (some (fn [[k v]]
+            (let [k (str k)]
+              (when (or (= k n) (str/ends-with? k (str ":" n))) v)))
+          attrs)))
+
+(defn- descendants-named
+  "Every element under `el` whose local name is `n`, `el` included."
+  [el n]
+  (when (vector? el)
+    (concat (when (= n (local-name el)) [el])
+            (mapcat #(descendants-named % n) (filter vector? el)))))
+
+(defn- para-text
+  "Every `w:t` under one paragraph, concatenated.
+
+  Word splits a paragraph into runs for reasons that have nothing to do with
+  its content — a spell-check marker, a change of language, a bookmark — so
+  a reader that took the first run would truncate most real documents to
+  their opening few characters."
+  [p]
+  (apply str (map xml/el-text (descendants-named p "t"))))
+
+(defn- para-style [p]
+  (some-> (first (descendants-named p "pStyle")) (attr-named "val")))
+
+(defn- num-id [p]
+  (some-> (first (descendants-named p "numId")) (attr-named "val")))
+
+(defn- heading-level
+  "The level a `w:pStyle` names, or nil.
+
+  `Heading3` and `berschrift3` are the same style in different locales of
+  Word, so the digits are what is read rather than the word in front of
+  them."
+  [style]
+  (when-let [[_ digits] (re-matches #"[A-Za-z]*[Hh]eading\s*(\d)" (str style))]
+    #?(:clj (Long/parseLong digits) :cljs (js/parseInt digits 10))))
+
+(def ^:private ref-kinds {"table-ref" :table-ref "file-ref" :file-ref
+                          "deck-ref" :deck-ref})
+
+(defn- ref-of
+  "`[deck-ref](drive:x)` as a ref block's parts, or nil."
+  [text]
+  (when-let [[_ label target] (re-matches #"\[([a-z-]+)\]\(drive:(.*)\)" (str/trim (str text)))]
+    (when-let [kind (get ref-kinds label)]
+      [kind target])))
+
+(defn- table-rows [tbl]
+  (mapv (fn [tr] (mapv (fn [tc] (apply str (map para-text (descendants-named tc "p"))))
+                       (descendants-named tr "tc")))
+        (descendants-named tbl "tr")))
+
+(defn- body-children
+  "The paragraphs and tables of the body, in order.
+
+  `find-all` is depth-first over the whole tree, so a `w:p` inside a `w:tc`
+  would come back as a paragraph of its own — the table's text would appear
+  twice, once in the table and once as loose paragraphs after it. Only the
+  body's direct children are taken."
+  [root]
+  (let [body (first (descendants-named root "body"))
+        ;; `[tag attrs & children]`, and the attrs map is *omitted* when the
+        ;; element has none — so children begin at index 1 or 2 depending on
+        ;; the element, and a fixed index reads the first child as the whole
+        ;; list or the whole list as nothing.
+        after-tag (rest body)
+        children (if (map? (first after-tag)) (rest after-tag) after-tag)]
+    (->> children
+         (filter vector?)
+         (filter #(contains? #{"p" "tbl"} (local-name %))))))
+
+(defn read
+  "A .docx's parts as a document.
+
+  Block ids are `b1`, `b2`, … in order: the file has none, and inventing
+  stable ones from content would make two identical paragraphs the same
+  block. The title is the first level-1 heading if there is one, and that
+  heading stays in the body — dropping it would mean a document read and
+  written again lost its first line."
+  ([files] (read files "doc"))
+  ([files id]
+   (let [xml-str (get files "word/document.xml")
+         root (when xml-str (xml/parse xml-str))
+         children (if root (body-children root) [])
+         blocks
+         (loop [[el & more] children n 1 out []]
+           (cond
+             (nil? el)
+             out
+
+             (= "tbl" (local-name el))
+             (recur more (inc n)
+                    (conj out (model/table (str "b" n) (table-rows el) {})))
+
+             :else
+             (let [text (para-text el)
+                   style (para-style el)
+                   level (heading-level style)
+                   num (num-id el)]
+               (cond
+                 ;; Consecutive list paragraphs with the same numbering are
+                 ;; one list. Written one paragraph each — which is what
+                 ;; .docx has — so reading them back separately would turn a
+                 ;; three-item list into three lists of one.
+                 num
+                 (let [same (take-while #(and (= "p" (local-name %)) (= num (num-id %)))
+                                        (cons el more))
+                       items (mapv para-text same)]
+                   (recur (drop (dec (count same)) more) (inc n)
+                          (conj out (model/list-block (str "b" n) items
+                                                      {:docs/ordered? (= "2" num)}))))
+
+                 (ref-of text)
+                 (let [[kind target] (ref-of text)]
+                   (recur more (inc n)
+                          (conj out (model/ref-block kind (str "b" n) target))))
+
+                 level
+                 (recur more (inc n) (conj out (model/heading (str "b" n) level text)))
+
+                 (= (style-for :quote) style)
+                 (recur more (inc n)
+                        (conj out (model/block :quote (str "b" n) {:docs/text text})))
+
+                 ;; Consecutive preformatted paragraphs are one code block,
+                 ;; for the same reason list items are one list: the writer
+                 ;; split it by line because a `w:t` cannot hold a newline.
+                 (= (style-for :code) style)
+                 (let [same (take-while #(and (= "p" (local-name %))
+                                              (= (style-for :code) (para-style %)))
+                                        (cons el more))]
+                   (recur (drop (dec (count same)) more) (inc n)
+                          (conj out (model/block :code (str "b" n)
+                                                 {:docs/text (str/join "\n"
+                                                                       (map para-text same))}))))
+
+                 ;; A paragraph with nothing in it is spacing, not content.
+                 (str/blank? text)
+                 (recur more n out)
+
+                 :else
+                 (recur more (inc n) (conj out (model/paragraph (str "b" n) text)))))))
+         first-h1 (first (filter #(and (= :heading (:docs/kind %))
+                                       (= 1 (:docs/level %)))
+                                 blocks))]
+     (model/document id (cond-> {:docs/blocks blocks}
+                          first-h1 (assoc :docs/title (:docs/text first-h1)))))))
+
+#?(:clj
+   (defn docx-entries
+     "Every part of a .docx byte array, as path → text."
+     [^bytes bytes]
+     (with-open [zip (ZipInputStream. (ByteArrayInputStream. bytes))]
+       (loop [acc {}]
+         (if-let [entry (.getNextEntry zip)]
+           (let [out (ByteArrayOutputStream.)
+                 buf (byte-array 8192)]
+             (loop []
+               (let [n (.read zip buf)]
+                 (when (pos? n) (.write out buf 0 n) (recur))))
+             (recur (assoc acc (.getName entry) (String. (.toByteArray out) "UTF-8"))))
+           acc)))))
+
+#?(:clj
+   (defn document-from-bytes
+     "A document from .docx bytes."
+     ([^bytes bytes] (document-from-bytes bytes "doc"))
+     ([^bytes bytes id] (read (docx-entries bytes) id))))
