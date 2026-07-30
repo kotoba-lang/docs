@@ -39,3 +39,13 @@
     (is (= doc (wire/rehydrate-document projected)))
     (is (= doc (wire/document-of-envelope (:body envelope))))
     (is (v/valid? (wire/document-of-envelope (:body envelope))))))
+
+(deftest a-malformed-payload-is-handed-on-rather-than-thrown-at
+  (doseq [payload [{"docs/blocks" "nope"}
+                   {"docs/blocks" ["not-a-block"]}
+                   {"docs/blocks" [{"docs/text-runs" "nope"}]}
+                   {"docs/comments" 7}
+                   {"docs/suggestions" "nope"}
+                   {"docs/type" 7}
+                   "not-a-document-at-all"]]
+    (is (some? (wire/rehydrate-document payload)) (str "survived: " (pr-str payload)))))
