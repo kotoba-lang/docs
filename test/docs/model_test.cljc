@@ -26,6 +26,16 @@
                 (d/add-suggestion {:docs/id "s1"
                                    :docs/op :replace-text
                                    :docs/block "p1"}))
-        envelope (wire/document-envelope doc {:request-id "req-1"})]
+        envelope (wire/document-envelope doc {:request-id "req-1"})
+        projected (wire/read-document-envelope (:body envelope))]
     (is (v/valid? doc))
-    (is (= doc (wire/read-document-envelope (:body envelope))))))
+    ;; What the wire actually carries — asserted rather than skipped past,
+    ;; because it is the shape every consumer of the envelope receives.
+    (is (= "document" (get projected "docs/type")))
+    (is (= ["heading" "paragraph" "list" "table"]
+           (mapv #(get % "docs/kind") (get projected "docs/blocks"))))
+    (is (= "replace-text" (get-in projected ["docs/suggestions" 0 "docs/op"])))
+    ;; And closed again by a reader that knows the schema.
+    (is (= doc (wire/rehydrate-document projected)))
+    (is (= doc (wire/document-of-envelope (:body envelope))))
+    (is (v/valid? (wire/document-of-envelope (:body envelope))))))

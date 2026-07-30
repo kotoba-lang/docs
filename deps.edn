@@ -1,7 +1,12 @@
 {:paths ["src" "resources"]
  :deps {io.github.kotoba-lang/transit
+        ;; Advanced off 77e3ce7d, the last commit before the office wire moved
+        ;; from Transit-tagged JSON to plain JSON. Staying there made the
+        ;; round-trip test below pass without the projection ever being
+        ;; exercised, while consumers depending on any library that pinned the
+        ;; newer transit resolved to it regardless.
         {:git/url "https://github.com/kotoba-lang/transit.git"
-         :git/sha "77e3ce7d1b5271440f56aa77cea0fd6e77b88eac"}}
+         :git/sha "ab5d9d956e088d77d7f91357f36a4a0c6bdfcadc"}}
  :aliases
  {:test {:extra-paths ["test"]
          :extra-deps {io.github.cognitect-labs/test-runner
