@@ -62,6 +62,59 @@
   nothing is a paragraph with no style at all."
   {:quote "Quote" :code "HTMLPreformatted"})
 
+;; ── what a .docx cannot carry ────────────────────────────────────────────────
+
+(defn unexpressed
+  "What `docx-files` will drop from this document, one entry per thing.
+
+  Shaped like `docs.validate/problems` — the same shape
+  `docs.markdown/unexpressed` uses — so a caller that already renders
+  problems renders these too. All `:info`: a format not carrying something
+  is a property of the format, not a fault in the document.
+
+  Markdown's list, plus one. Markdown at least spells bold and italic; this
+  writer ignores `:docs/text-runs` entirely, so a styled run goes out plain.
+  Writing them would mean splitting each paragraph into runs at the range
+  boundaries and giving each its own `w:rPr` — which is how .docx does it
+  and is a real piece of work rather than a line."
+  [doc]
+  (let [entry (fn [code id msg]
+                {:docs/severity :info :docs/code code :docs/id id :docs/msg msg})]
+    (vec
+     (concat
+      (when (seq (:docs/comments doc))
+        [(entry :docx/comments-dropped (:docs/id doc)
+                (str (count (:docs/comments doc))
+                     " 件のコメントは文書についてのものなので書き出されません。"))])
+      (when (seq (:docs/suggestions doc))
+        [(entry :docx/suggestions-dropped (:docs/id doc)
+                (str (count (:docs/suggestions doc)) " 件の提案は書き出されません。"))])
+      ;; Once per block, not once per run: two bold ranges in one paragraph
+      ;; are one answer.
+      (for [b (:docs/blocks doc)
+            :when (seq (:docs/text-runs b))]
+        (entry :docx/text-runs-dropped (:docs/id b)
+               "文字装飾（太字・斜体など）は書き出されません。"))
+      (for [b (:docs/blocks doc)
+            :when (contains? #{:table-ref :file-ref :deck-ref} (:docs/kind b))]
+        (entry :docx/reference-becomes-text (:docs/id b)
+               (str (name (:docs/kind b))
+                    " は、この Drive だけがたどれるテキストになります。")))
+      ;; Word has six heading levels, the same as Markdown, and the writer
+      ;; clamps to them.
+      (for [b (:docs/blocks doc)
+            :when (and (= :heading (:docs/kind b))
+                       (number? (:docs/level b))
+                       (not (<= 1 (:docs/level b) 6)))]
+        (entry :docx/heading-level-clamped (:docs/id b)
+               (str "見出しレベル " (:docs/level b) " は "
+                    (max 1 (min 6 (:docs/level b))) " として書き出されます。")))))))
+
+;; Block ids are dropped too and are deliberately not reported. Every export
+;; drops them, on every document, so an entry for it would appear on
+;; everything and mean nothing — `docs.markdown/unexpressed` makes the same
+;; choice, and both namespace docstrings say it instead.
+
 ;; ── writing ─────────────────────────────────────────────────────────────────
 
 (defn- run
