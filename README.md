@@ -55,6 +55,26 @@ Reading accepts more than writing produces, because whatever was pasted in was
 not written here, and it never throws — malformed input becomes the nearest
 block and the validator is what reports it.
 
+## HTML, for printing
+
+`docs.html/body` renders a document's blocks as HTML.
+
+Written for printing, and that is the point: a PDF writer would have to
+embed a CJK font — the reason there is no PDF export here — and a browser
+already has one. The honest way to get a PDF of a Japanese document out is a
+page the browser can print, and this is that page's body.
+
+Semantic, not styled: `<h2>`, `<blockquote>`, `<ol>`, `<table>` with a
+`<thead>`. The block kinds are already the distinctions HTML has names for,
+and a document rendered as styled `<div>`s prints the same and reads as
+nothing to a screen reader.
+
+Runs are emitted in **one pass**, each span escaped as it is written.
+Splicing tags into the raw string and escaping afterwards eats the tags;
+escaping first moves every offset, because `&lt;` is four characters where
+`<` was one. The one pass is the only order that is right, which is worth
+saying because the other two look right.
+
 ## Word
 
 `docs.docx` writes a document as a .docx and reads one back, on top of

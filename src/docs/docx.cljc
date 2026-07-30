@@ -166,7 +166,7 @@
 (defn- block-xml [b]
   (let [text (str (:docs/text b))]
     (case (:docs/kind b)
-      :heading (para text (str "Heading" (max 1 (min 6 (or (:docs/level b) 1)))))
+      :heading (para text (str "Heading" (model/heading-level b)))
       :paragraph (para text)
       :quote (para text (style-for :quote))
       ;; Each line its own paragraph: a `w:t` containing a newline shows the

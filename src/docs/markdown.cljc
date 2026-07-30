@@ -170,8 +170,7 @@
 (defn- block->md [b]
   (let [text (apply-runs (:docs/text b) (:docs/text-runs b))]
     (case (:docs/kind b)
-      :heading (str (apply str (repeat (max 1 (min 6 (or (:docs/level b) 1))) "#"))
-                    " " text)
+      :heading (str (apply str (repeat (model/heading-level b) "#")) " " text)
       :paragraph text
       :quote (->> (str/split-lines (if (str/blank? text) " " text))
                   (map #(str "> " %))

@@ -182,3 +182,12 @@
                  (d/block :table "t2" {:docs/rows []})
                  (d/block :deck-ref "r" {})]]
     (is (string? (md/write (doc-with block))) (pr-str block))))
+
+(deftest a-heading-level-that-is-not-a-number-does-not-throw
+  ;; Shared with docx and html through `model/heading-level`. All three used
+  ;; to throw, and nothing validates the type of a level.
+  (let [doc (-> (d/document "d" {:docs/title "T"})
+                (d/add-block {:docs/id "h" :docs/kind :heading
+                              :docs/level "two" :docs/text "見出し"}))]
+    (is (string? (md/write doc)))
+    (is (str/includes? (md/write doc) "# 見出し"))))
