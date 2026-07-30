@@ -217,3 +217,59 @@
        (is (= "月次報告" (:docs/title back)))
        (is (= "決算は来週締めます。"
               (:docs/text (nth (:docs/blocks back) 3)))))))
+
+;; ── what a .docx cannot carry ───────────────────────────────────────────────
+
+(deftest a-document-with-nothing-to-lose-says-nothing
+  (is (= [] (docx/unexpressed (-> (d/document "d" {:docs/title "T"})
+                                  (d/add-block (d/paragraph "p" "本文")))))))
+
+(deftest every-styled-run-is-dropped-not-only-the-unspellable-ones
+  ;; Markdown spells bold and italic; this writer ignores :docs/text-runs
+  ;; entirely, so even a plain bold range goes out plain. That is the one
+  ;; entry Markdown's list does not have.
+  (let [doc (-> (d/document "d" {:docs/title "T"})
+                (d/add-block (d/add-text-style (d/paragraph "p" "重要な注意") 0 2
+                                               {:bold true})))
+        [entry] (docx/unexpressed doc)]
+    (is (= :docx/text-runs-dropped (:docs/code entry)))
+    (is (= "p" (:docs/id entry)))
+    (is (= :info (:docs/severity entry)))
+    ;; And the text really does go out plain, rather than wearing somebody
+    ;; else's emphasis.
+    (is (not (str/includes? (get (docx/docx-files doc) "word/document.xml") "<w:b/>")))))
+
+(deftest one-answer-per-block-not-per-run
+  (let [doc (-> (d/document "d" {:docs/title "T"})
+                (d/add-block (-> (d/paragraph "p" "太字と斜体")
+                                 (d/add-text-style 0 2 {:bold true})
+                                 (d/add-text-style 3 5 {:italic true}))))]
+    (is (= 1 (count (docx/unexpressed doc))))))
+
+(deftest comments-suggestions-references-and-deep-headings-are-named
+  (let [doc (-> (d/document "d" {:docs/title "T"})
+                (d/add-block (d/ref-block :file-ref "r" "drive-id"))
+                (d/add-block (d/block :heading "h9" {:docs/level 9 :docs/text "深い"}))
+                (d/add-comment {:docs/id "c" :docs/anchor {:docs/block "p"}})
+                (d/add-suggestion {:docs/id "s" :docs/op :replace-text}))
+        codes (set (map :docs/code (docx/unexpressed doc)))]
+    (is (contains? codes :docx/comments-dropped))
+    (is (contains? codes :docx/suggestions-dropped))
+    (is (contains? codes :docx/reference-becomes-text))
+    (is (contains? codes :docx/heading-level-clamped))
+    (is (every? #(= :info (:docs/severity %)) (docx/unexpressed doc)))))
+
+(deftest block-ids-are-not-reported
+  ;; They are dropped, and every export drops them on every document — an
+  ;; entry for it would appear on everything and mean nothing. The docstring
+  ;; says it instead, and `docs.markdown/unexpressed` makes the same choice.
+  (let [doc (-> (d/document "d" {:docs/title "T"})
+                (d/add-block (d/paragraph "very-specific-id" "本文")))]
+    (is (= [] (docx/unexpressed doc)))
+    (is (= ["b1" "b2"] (mapv :docs/id (:docs/blocks (round doc)))))))
+
+(deftest unexpressed-does-not-throw-on-a-half-built-document
+  (doseq [doc [{} {:docs/blocks nil} {:docs/blocks [{}]}
+               {:docs/blocks [{:docs/kind :heading :docs/level "three"}]}
+               {:docs/comments []} {:docs/suggestions nil}]]
+    (is (vector? (docx/unexpressed doc)) (pr-str doc))))
