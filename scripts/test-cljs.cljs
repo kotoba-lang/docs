@@ -9,9 +9,10 @@
 ;;   nbb --classpath "src:test:$(clojure -Spath)" scripts/test-cljs.cljs
 
 (require '[clojure.test :as t]
+         'docs.docx-test
          'docs.markdown-test
          'docs.model-test)
 
-(let [{:keys [fail error]} (t/run-tests 'docs.markdown-test 'docs.model-test)]
+(let [{:keys [fail error]} (t/run-tests 'docs.docx-test 'docs.markdown-test 'docs.model-test)]
   (when (pos? (+ (or fail 0) (or error 0)))
     (js/process.exit 1)))

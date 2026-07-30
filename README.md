@@ -55,6 +55,40 @@ Reading accepts more than writing produces, because whatever was pasted in was
 not written here, and it never throws — malformed input becomes the nearest
 block and the validator is what reports it.
 
+## Word
+
+`docs.docx` writes a document as a .docx and reads one back, on top of
+`ooxml` — the same arrangement `slides.pptx` and `sheets.xlsx` use, and
+`ooxml/package-kind` already returned `:docx` for a `word/` prefix.
+
+```clojure
+(docx/docx-files doc)               ; path -> text, inspectable without a zip
+(docx/docx-bytes doc)               ; JVM
+(docx/read files "id")              ; back again
+(docx/document-from-bytes b "id")   ; JVM
+```
+
+**Structure rather than appearance.** A heading is a paragraph carrying
+`w:pStyle Heading1`, not bold 18pt text; a list is `w:numPr`, not a line
+beginning with `-`; a table is `w:tbl`, not aligned spaces. Word renders
+both the same way and only one of them can be read back as a heading,
+collapsed into an outline, or restyled by whoever receives it. That means
+shipping `styles.xml` and `numbering.xml`, because a style id referring to
+nothing is a paragraph with no style and a `numId` with no entry is a list
+with no marker.
+
+Two things the reader has to do that the writer does not. Word splits a
+paragraph into runs for reasons that have nothing to do with its content —
+a spell-check marker, a language change, a bookmark — so every `w:t` under
+a paragraph is concatenated. And tags are matched on their **local name**:
+WordprocessingML puts `w:` on everything, so `xml.parse` returns `:w/p`
+where SpreadsheetML gives a bare `:c`, and an attribute written `w:val` is
+not found by asking for `val`. Getting either wrong returns an empty
+document, which looks exactly like a document with nothing in it.
+
+Block ids do not survive — .docx has nowhere to put them, the same as
+Markdown — so `read` regenerates them.
+
 ## Test
 
 ```bash
