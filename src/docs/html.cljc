@@ -40,7 +40,7 @@
   [[:bold "strong"] [:italic "em"] [:code "code"]])
 
 (defn- safe-runs
-  "`:docs/text` with its runs marked up, escaped everywhere.
+  "A block's text marked up, escaped everywhere.
 
   Emitted in one pass — each span escaped as it is written — rather than by
   splicing tags into the raw string and escaping afterwards. Splicing first
@@ -49,39 +49,20 @@
   characters where `<` was one. The one pass is the only order that is
   right, which is worth saying because the other two look right.
 
-  Runs are applied in order and the gaps between them are escaped too.
-  Overlapping runs are left alone rather than merged:
-  `<strong>a<em>b</strong>c</em>` is not HTML, and producing it would be
-  worse than producing the text."
-  [text runs]
-  (let [text (str text)
-        n (count text)
-        usable (->> runs
-                    (filter #(and (number? (:docs/from %)) (number? (:docs/to %))
-                                  (<= 0 (:docs/from %)) (<= (:docs/to %) n)
-                                  (< (:docs/from %) (:docs/to %))))
-                    (sort-by :docs/from))
-        overlapping? (some (fn [[a b]] (> (:docs/to a) (:docs/from b)))
-                           (partition 2 1 usable))]
-    (if (or overlapping? (empty? usable))
-      (esc text)
-      (let [[out at] (reduce
-                      (fn [[out at] {:keys [docs/from docs/to docs/style]}]
-                        [(str out
-                              (esc (subs text at from))
-                              (reduce (fn [s [k el]]
-                                        (if (get style k)
-                                          (str "<" el ">" s "</" el ">")
-                                          s))
-                                      (esc (subs text from to))
-                                      run-elements))
-                         to])
-                      ["" 0]
-                      usable)]
-        (str out (esc (subs text at)))))))
+  Which runs are usable, and what happens when two overlap, is
+  `model/text-spans`'s business — this had its own copy of that rule and so
+  did the Markdown writer, and the docx writer had none and dropped every
+  run."
+  [b]
+  (apply str
+         (for [{:keys [docs/text docs/style]} (model/text-spans b)]
+           (reduce (fn [s [k el]]
+                     (if (get style k) (str "<" el ">" s "</" el ">") s))
+                   (esc text)
+                   run-elements))))
 
 (defn- block->html [b]
-  (let [text (safe-runs (:docs/text b) (:docs/text-runs b))]
+  (let [text (safe-runs b)]
     (case (:docs/kind b)
       :heading (let [level (model/heading-level b)]
                  (str "<h" level ">" text "</h" level ">"))

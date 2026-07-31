@@ -1,7 +1,7 @@
 (ns docs.docx-test
   (:refer-clojure :exclude [read])
   (:require [clojure.string :as str]
-            [clojure.test :refer [deftest is]]
+            [clojure.test :refer [deftest is testing]]
             [docs.docx :as docx]
             [docs.model :as d]
             [docs.validate :as v]
@@ -224,27 +224,71 @@
   (is (= [] (docx/unexpressed (-> (d/document "d" {:docs/title "T"})
                                   (d/add-block (d/paragraph "p" "本文")))))))
 
-(deftest every-styled-run-is-dropped-not-only-the-unspellable-ones
-  ;; Markdown spells bold and italic; this writer ignores :docs/text-runs
-  ;; entirely, so even a plain bold range goes out plain. That is the one
-  ;; entry Markdown's list does not have.
+(deftest a-styled-range-arrives-in-word-wearing-its-style
+  ;; This writer used to ignore `:docs/text-runs` entirely and report every
+  ;; styled block as a loss. Word has had `w:rPr` since it had runs; what
+  ;; was missing was cutting the text where the styles change.
   (let [doc (-> (d/document "d" {:docs/title "T"})
                 (d/add-block (d/add-text-style (d/paragraph "p" "重要な注意") 0 2
                                                {:bold true})))
+        xml (get (docx/docx-files doc) "word/document.xml")]
+    ;; The whole paragraph, because the shape is the point: one run for the
+    ;; styled range and one for the rest, and the unstyled one carries no
+    ;; `w:rPr` at all rather than an empty one.
+    (is (str/includes?
+         xml
+         (str "<w:p><w:r><w:rPr><w:b/></w:rPr>"
+              "<w:t xml:space=\"preserve\">重要</w:t></w:r>"
+              "<w:r><w:t xml:space=\"preserve\">な注意</w:t></w:r></w:p>"))
+        xml)
+    (is (= [] (docx/unexpressed doc)) "and nothing is reported as lost")))
+
+(deftest every-mark-word-has-a-property-for
+  (let [styled (fn [style]
+                 (get (docx/docx-files
+                       (-> (d/document "d" {:docs/title "T"})
+                           (d/add-block (d/add-text-style (d/paragraph "p" "text")
+                                                          0 4 style))))
+                      "word/document.xml"))]
+    (is (str/includes? (styled {:bold true}) "<w:b/>"))
+    (is (str/includes? (styled {:italic true}) "<w:i/>"))
+    (is (str/includes? (styled {:underline true}) "<w:u w:val=\"single\"/>"))
+    (is (str/includes? (styled {:strike true}) "<w:strike/>"))
+    ;; Word has no character style for code in this document, so a
+    ;; monospaced face is what says it.
+    (is (str/includes? (styled {:code true}) "w:ascii=\"Consolas\""))
+    (testing "and two at once are two properties on one run"
+      (let [xml (styled {:bold true :italic true})]
+        (is (str/includes? xml "<w:rPr><w:b/><w:i/></w:rPr>"))))))
+
+(deftest overlapping-ranges-are-still-a-loss-and-say-so
+  ;; `model/text-spans` marks up nothing when two runs overlap rather than
+  ;; guessing which style wins — the same answer HTML and Markdown give —
+  ;; so this is the one styled block that still goes out plain.
+  (let [doc (-> (d/document "d" {:docs/title "T"})
+                (d/add-block (-> (d/paragraph "p" "重なる範囲")
+                                 (d/add-text-style 0 3 {:bold true})
+                                 (d/add-text-style 2 5 {:italic true}))))
         [entry] (docx/unexpressed doc)]
     (is (= :docx/text-runs-dropped (:docs/code entry)))
     (is (= "p" (:docs/id entry)))
     (is (= :info (:docs/severity entry)))
-    ;; And the text really does go out plain, rather than wearing somebody
-    ;; else's emphasis.
     (is (not (str/includes? (get (docx/docx-files doc) "word/document.xml") "<w:b/>")))))
 
 (deftest one-answer-per-block-not-per-run
-  (let [doc (-> (d/document "d" {:docs/title "T"})
-                (d/add-block (-> (d/paragraph "p" "太字と斜体")
-                                 (d/add-text-style 0 2 {:bold true})
-                                 (d/add-text-style 3 5 {:italic true}))))]
-    (is (= 1 (count (docx/unexpressed doc))))))
+  ;; Two ranges that do not overlap are both written, so there is nothing to
+  ;; report; two that do are one answer about the block, not one each.
+  (let [written (-> (d/document "d" {:docs/title "T"})
+                    (d/add-block (-> (d/paragraph "p" "太字と斜体")
+                                     (d/add-text-style 0 2 {:bold true})
+                                     (d/add-text-style 3 5 {:italic true}))))
+        overlapping (-> (d/document "d" {:docs/title "T"})
+                        (d/add-block (-> (d/paragraph "p" "太字と斜体")
+                                         (d/add-text-style 0 3 {:bold true})
+                                         (d/add-text-style 1 4 {:italic true})
+                                         (d/add-text-style 2 5 {:code true}))))]
+    (is (= [] (docx/unexpressed written)))
+    (is (= 1 (count (docx/unexpressed overlapping))))))
 
 (deftest comments-suggestions-references-and-deep-headings-are-named
   (let [doc (-> (d/document "d" {:docs/title "T"})

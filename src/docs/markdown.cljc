@@ -121,33 +121,17 @@
           expressible-styles))
 
 (defn- apply-runs
-  "`:docs/text` with its runs spelled out.
+  "A block's text with its runs spelled out.
 
-  Runs are applied back to front so an earlier one's inserted characters do
-  not move a later one's offsets — the offsets are into the original text,
-  and rewriting left to right would shift every range after the first by the
-  length of whatever was inserted.
-
-  Overlapping runs are left alone rather than merged: `**a *b** c*` is not
-  something Markdown means, and producing it would be worse than producing
-  the text."
-  [text runs]
-  (let [n (count (str text))
-        usable (->> runs
-                    (filter #(and (number? (:docs/from %)) (number? (:docs/to %))
-                                  (<= 0 (:docs/from %)) (<= (:docs/to %) n)
-                                  (< (:docs/from %) (:docs/to %))))
-                    (sort-by :docs/from))
-        overlapping? (some (fn [[a b]] (> (:docs/to a) (:docs/from b)))
-                           (partition 2 1 usable))]
-    (if (or overlapping? (empty? usable))
-      (str text)
-      (reduce (fn [acc {:keys [docs/from docs/to docs/style]}]
-                (str (subs acc 0 from)
-                     (style-wrap (subs acc from to) style)
-                     (subs acc to)))
-              (str text)
-              (reverse usable)))))
+  Which runs are usable, and what happens when two overlap, is
+  `model/text-spans`'s business — this walked them back to front so an
+  earlier one's inserted characters would not move a later one's offsets,
+  which is a problem that does not arise once the text arrives already cut
+  into pieces."
+  [b]
+  (apply str (map (fn [{:keys [docs/text docs/style]}]
+                    (if style (style-wrap text style) text))
+                  (model/text-spans b))))
 
 (defn- escape-cell
   "A table cell's text, with any `|` escaped.
@@ -168,7 +152,7 @@
     (apply str (repeat (max 3 (inc longest)) "`"))))
 
 (defn- block->md [b]
-  (let [text (apply-runs (:docs/text b) (:docs/text-runs b))]
+  (let [text (apply-runs b)]
     (case (:docs/kind b)
       :heading (str (apply str (repeat (model/heading-level b) "#")) " " text)
       :paragraph text
