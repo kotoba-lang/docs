@@ -53,6 +53,19 @@
 (def ^:private rels-ns
   "http://schemas.openxmlformats.org/officeDocument/2006/relationships")
 
+(def ^:private run-marks
+  "The run styles WordprocessingML has a property for, and which one.
+
+  `:code` is a font rather than a mark — Word has no character style for
+  code in the document this writes, so a monospaced face is what says it —
+  and it is last so a run that is both bold and code gets `<w:b/>` first,
+  which is the order Word writes them in itself."
+  [[:bold "<w:b/>"]
+   [:italic "<w:i/>"]
+   [:underline "<w:u w:val=\"single\"/>"]
+   [:strike "<w:strike/>"]
+   [:code "<w:rFonts w:ascii=\"Consolas\" w:hAnsi=\"Consolas\"/>"]])
+
 (def ^:private style-for
   "The `w:pStyle` each block kind is written with.
 
@@ -92,19 +105,33 @@
       ;; Once per block, not once per run: two bold ranges in one paragraph
       ;; are one answer.
       ;;
-      ;; Only the ones that still go nowhere. Styling is written now — Word
-      ;; has had `w:rPr` since it had runs — so what is left to report is a
-      ;; block whose runs overlap, which `model/text-spans` marks up as
-      ;; nothing at all rather than guessing which of two styles wins, and a
-      ;; code block, whose text is characters somebody is reading.
+      ;; Only what still goes nowhere. Styling is written now — Word has had
+      ;; `w:rPr` since it had runs — so three things are left to report, and
+      ;; the third is the one this got wrong first: a block whose runs
+      ;; overlap, which `model/text-spans` marks up as nothing at all rather
+      ;; than guessing which of two styles wins; a code block, whose text is
+      ;; characters somebody is reading; and a style with no property in
+      ;; WordprocessingML, which is written as unstyled text. `:color` is
+      ;; the live example — it is not in `run-marks`, and reporting only the
+      ;; first two cases turned a loss that used to be named into a silent
+      ;; one, which is worse than the loss.
       (for [b (:docs/blocks doc)
+            :let [spans (model/text-spans b)
+                  spelled (set (map first run-marks))
+                  unspellable (->> spans
+                                   (mapcat (comp keys :docs/style))
+                                   (remove (partial contains? spelled))
+                                   distinct)]
             :when (and (seq (:docs/text-runs b))
                        (or (= :code (:docs/kind b))
-                           (not-any? :docs/style (model/text-spans b))))]
+                           (not-any? :docs/style spans)
+                           (seq unspellable)))]
         (entry :docx/text-runs-dropped (:docs/id b)
-               (if (= :code (:docs/kind b))
-                 "コード内の文字装飾は書き出されません。"
-                 "重なった装飾範囲は書き出されません。")))
+               (cond
+                 (= :code (:docs/kind b)) "コード内の文字装飾は書き出されません。"
+                 (not-any? :docs/style spans) "重なった装飾範囲は書き出されません。"
+                 :else (str (str/join "・" (map name unspellable))
+                            " は Word に書き出せません。"))))
       (for [b (:docs/blocks doc)
             :when (contains? #{:table-ref :file-ref :deck-ref} (:docs/kind b))]
         (entry :docx/reference-becomes-text (:docs/id b)
@@ -126,19 +153,6 @@
 ;; choice, and both namespace docstrings say it instead.
 
 ;; ── writing ─────────────────────────────────────────────────────────────────
-
-(def ^:private run-marks
-  "The run styles WordprocessingML has a property for, and which one.
-
-  `:code` is a font rather than a mark — Word has no character style for
-  code in the document this writes, so a monospaced face is what says it —
-  and it is last so a run that is both bold and code gets `<w:b/>` first,
-  which is the order Word writes them in itself."
-  [[:bold "<w:b/>"]
-   [:italic "<w:i/>"]
-   [:underline "<w:u w:val=\"single\"/>"]
-   [:strike "<w:strike/>"]
-   [:code "<w:rFonts w:ascii=\"Consolas\" w:hAnsi=\"Consolas\"/>"]])
 
 (defn- run
   "One `w:r`, the thing that actually holds text.

@@ -325,3 +325,22 @@
     (is (string? (get (docx/docx-files doc) "word/document.xml")))
     (is (str/includes? (get (docx/docx-files doc) "word/document.xml")
                        "w:val=\"Heading1\""))))
+
+(deftest a-style-word-has-no-property-for-is-still-a-loss-and-says-which
+  ;; The first version of the run writer reported only overlap and code, so
+  ;; a `:color` run — which has no `w:rPr` property here and goes out as
+  ;; plain text — became a silent loss where it used to be a named one.
+  ;; A loss nobody is told about is worse than the loss.
+  (let [doc (-> (d/document "d" {:docs/title "T"})
+                (d/add-block (d/add-text-style (d/paragraph "p" "赤い字") 0 2
+                                               {:color "red"})))
+        [entry] (docx/unexpressed doc)]
+    (is (= :docx/text-runs-dropped (:docs/code entry)))
+    (is (str/includes? (:docs/msg entry) "color"))
+    (testing "and a run that is both spellable and not says so once"
+      (let [mixed (-> (d/document "d" {:docs/title "T"})
+                      (d/add-block (d/add-text-style (d/paragraph "p" "太い赤")
+                                                     0 2 {:bold true :color "red"})))
+            xml (get (docx/docx-files mixed) "word/document.xml")]
+        (is (str/includes? xml "<w:b/>") "the part Word has is written")
+        (is (= 1 (count (docx/unexpressed mixed))))))))
