@@ -1,5 +1,5 @@
 (ns docs.model-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [clojure.test :refer [deftest is testing]]
             [docs.model :as d]
             [docs.validate :as v]
             [docs.wire :as wire]))
@@ -62,3 +62,39 @@
   (is (= 1 (d/heading-level {:docs/level nil})))
   (is (= 1 (d/heading-level {})))
   (is (= 3 (d/heading-level {:docs/level 3.7})) "truncated, not rejected"))
+
+(deftest text-spans-is-the-one-place-that-decides-what-a-run-is
+  ;; Three writers each had their own copy of this rule and the third had
+  ;; none: `docs.html` filtered and sorted and gave up on overlap,
+  ;; `docs.markdown` did the same in reverse, and `docs.docx` dropped every
+  ;; run and reported it as a loss.
+  (let [spans (fn [text runs] (d/text-spans {:docs/text text :docs/text-runs runs}))]
+    (is (= [{:docs/text "abc"}] (spans "abc" nil))
+        "no runs is one span, so a caller can always just walk the result")
+    (is (= [] (spans "" nil)))
+    (is (= [{:docs/text "a"}
+            {:docs/text "bc" :docs/style {:bold true}}
+            {:docs/text "def"}]
+           (spans "abcdef" [{:docs/from 1 :docs/to 3 :docs/style {:bold true}}])))
+    (testing "the gaps are spans too, so nothing has to index back into the text"
+      (is (= "abcdef" (apply str (map :docs/text
+                                      (spans "abcdef"
+                                             [{:docs/from 0 :docs/to 1 :docs/style {:bold true}}
+                                              {:docs/from 4 :docs/to 6 :docs/style {:italic true}}]))))))
+    (testing "a range that is not one is ignored"
+      (doseq [bad [{:docs/from nil :docs/to 2} {:docs/from 2 :docs/to 2}
+                   {:docs/from -1 :docs/to 2} {:docs/from 1 :docs/to 99}
+                   {:docs/from "1" :docs/to 2}]]
+        (is (= [{:docs/text "abcdef"}] (spans "abcdef" [bad])) (pr-str bad))))
+    (testing "overlap marks up nothing rather than guessing which style wins"
+      ;; `<strong>a<em>b</strong>c</em>` is not HTML and `**a *b** c*` is not
+      ;; Markdown. A writer that resolved it its own way would disagree with
+      ;; its siblings about what the document says.
+      (is (= [{:docs/text "abcdef"}]
+             (spans "abcdef" [{:docs/from 0 :docs/to 3 :docs/style {:bold true}}
+                              {:docs/from 2 :docs/to 5 :docs/style {:italic true}}]))))
+    (testing "and runs out of order are put in order"
+      (is (= ["a" "b" "cdef"]
+             (mapv :docs/text
+                   (spans "abcdef" [{:docs/from 1 :docs/to 2 :docs/style {:italic true}}
+                                    {:docs/from 0 :docs/to 1 :docs/style {:bold true}}])))))))

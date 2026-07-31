@@ -91,10 +91,20 @@
                 (str (count (:docs/suggestions doc)) " 件の提案は書き出されません。"))])
       ;; Once per block, not once per run: two bold ranges in one paragraph
       ;; are one answer.
+      ;;
+      ;; Only the ones that still go nowhere. Styling is written now — Word
+      ;; has had `w:rPr` since it had runs — so what is left to report is a
+      ;; block whose runs overlap, which `model/text-spans` marks up as
+      ;; nothing at all rather than guessing which of two styles wins, and a
+      ;; code block, whose text is characters somebody is reading.
       (for [b (:docs/blocks doc)
-            :when (seq (:docs/text-runs b))]
+            :when (and (seq (:docs/text-runs b))
+                       (or (= :code (:docs/kind b))
+                           (not-any? :docs/style (model/text-spans b))))]
         (entry :docx/text-runs-dropped (:docs/id b)
-               "文字装飾（太字・斜体など）は書き出されません。"))
+               (if (= :code (:docs/kind b))
+                 "コード内の文字装飾は書き出されません。"
+                 "重なった装飾範囲は書き出されません。")))
       (for [b (:docs/blocks doc)
             :when (contains? #{:table-ref :file-ref :deck-ref} (:docs/kind b))]
         (entry :docx/reference-becomes-text (:docs/id b)
@@ -117,27 +127,65 @@
 
 ;; ── writing ─────────────────────────────────────────────────────────────────
 
+(def ^:private run-marks
+  "The run styles WordprocessingML has a property for, and which one.
+
+  `:code` is a font rather than a mark — Word has no character style for
+  code in the document this writes, so a monospaced face is what says it —
+  and it is last so a run that is both bold and code gets `<w:b/>` first,
+  which is the order Word writes them in itself."
+  [[:bold "<w:b/>"]
+   [:italic "<w:i/>"]
+   [:underline "<w:u w:val=\"single\"/>"]
+   [:strike "<w:strike/>"]
+   [:code "<w:rFonts w:ascii=\"Consolas\" w:hAnsi=\"Consolas\"/>"]])
+
 (defn- run
   "One `w:r`, the thing that actually holds text.
 
   `xml:space=\"preserve\"` on every one: without it a leading or trailing
   space is dropped, and a document reassembled from runs loses the spaces
-  between them."
-  [text]
-  (str "<w:r><w:t xml:space=\"preserve\">" (ooxml/xml-esc (str text)) "</w:t></w:r>"))
+  between them.
+
+  This ignored `style` and there was nowhere for one to come from: the whole
+  paragraph was a single run and the writer reported every styled range as
+  dropped. Word has had `w:rPr` since it had runs; the missing part was
+  cutting the text at the places the styles change, which
+  `model/text-spans` now does for all three writers."
+  ([text] (run text nil))
+  ([text style]
+   (let [props (apply str (keep (fn [[k mark]] (when (get style k) mark)) run-marks))]
+     (str "<w:r>"
+          (when (seq props) (str "<w:rPr>" props "</w:rPr>"))
+          "<w:t xml:space=\"preserve\">" (ooxml/xml-esc (str text)) "</w:t></w:r>"))))
+
+(defn- runs
+  "Every `w:r` a block's text needs, styled where it is styled.
+
+  A block with no runs is one `w:r`, which is what every paragraph used to
+  be — including an empty one, because a `w:p` with no run at all is a
+  paragraph Word shows but cannot put a cursor in."
+  [b]
+  (let [spans (model/text-spans b)]
+    (if (empty? spans)
+      (run "")
+      (apply str (map (fn [{:keys [docs/text docs/style]}] (run text style)) spans)))))
 
 (defn- para
-  "One `w:p` with an optional style and numbering."
-  ([text] (para text nil nil))
-  ([text style] (para text style nil))
-  ([text style num-id]
+  "One `w:p` with an optional style and numbering.
+
+  `body` is either text — a table cell, a list item, a line of code, none of
+  which carry runs — or the `w:r` elements a block's styled text came to."
+  ([body] (para body nil nil))
+  ([body style] (para body style nil))
+  ([body style num-id]
    (let [props (str (when style (str "<w:pStyle w:val=\"" style "\"/>"))
                     (when num-id
                       (str "<w:numPr><w:ilvl w:val=\"0\"/>"
                            "<w:numId w:val=\"" num-id "\"/></w:numPr>")))]
      (str "<w:p>"
           (when (seq props) (str "<w:pPr>" props "</w:pPr>"))
-          (run text)
+          (if (str/starts-with? (str body) "<w:r") (str body) (run body))
           "</w:p>"))))
 
 (defn- table-xml
@@ -164,11 +212,16 @@
          "</w:tbl>")))
 
 (defn- block-xml [b]
-  (let [text (str (:docs/text b))]
+  (let [text (str (:docs/text b))
+        ;; The runs for the kinds whose text can carry styling. `:code` is
+        ;; not one: inside a code block a bold range is characters somebody
+        ;; is reading, and the same reason keeps it out of the HTML writer's
+        ;; `<pre>`.
+        styled (runs b)]
     (case (:docs/kind b)
-      :heading (para text (str "Heading" (model/heading-level b)))
-      :paragraph (para text)
-      :quote (para text (style-for :quote))
+      :heading (para styled (str "Heading" (model/heading-level b)))
+      :paragraph (para styled)
+      :quote (para styled (style-for :quote))
       ;; Each line its own paragraph: a `w:t` containing a newline shows the
       ;; newline as a space, so a code block written as one run arrives as
       ;; one long line.
