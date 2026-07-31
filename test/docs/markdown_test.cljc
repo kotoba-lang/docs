@@ -1,7 +1,7 @@
 (ns docs.markdown-test
   (:refer-clojure :exclude [read])
   (:require [clojure.string :as str]
-            [clojure.test :refer [deftest is]]
+            [clojure.test :refer [deftest is testing]]
             [docs.markdown :as md]
             [docs.model :as d]
             [docs.validate :as v]))
@@ -191,3 +191,27 @@
                               :docs/level "two" :docs/text "見出し"}))]
     (is (string? (md/write doc)))
     (is (str/includes? (md/write doc) "# 見出し"))))
+
+(deftest a-link-is-a-link-and-brackets-are-handled
+  (let [para (fn [style] (-> (d/document "d" {:docs/title "T"})
+                             (d/add-block (d/add-text-style
+                                           (d/paragraph "p" "ここを見て") 0 2 style))
+                             md/write))]
+    (is (str/includes? (para {:link "https://example.com/a"})
+                       "[ここ](https://example.com/a)"))
+    (testing "the link is outside the emphasis"
+      ;; `[**a**](url)` is a bold link; `**[a](url)**` is a bold thing that
+      ;; happens to be one.
+      (is (str/includes? (para {:link "https://example.com" :bold true})
+                         "[**ここ**](https://example.com)")))
+    (testing "a URL holding a bracket gets the angle brackets Markdown has for it"
+      ;; `[a](b(c))` closes at the first `)`.
+      (is (str/includes? (para {:link "https://example.com/a_(b)"})
+                         "[ここ](<https://example.com/a_(b)>)")))
+    (testing "and one that is not a place is left as text and reported"
+      (let [doc (-> (d/document "d" {:docs/title "T"})
+                    (d/add-block (d/add-text-style (d/paragraph "p" "ここ") 0 2
+                                                   {:link "javascript:alert(1)"})))]
+        (is (not (str/includes? (md/write doc) "javascript")))
+        (is (= [:markdown/style-dropped]
+               (mapv :docs/code (md/unexpressed doc))))))))

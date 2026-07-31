@@ -98,3 +98,19 @@
              (mapv :docs/text
                    (spans "abcdef" [{:docs/from 1 :docs/to 2 :docs/style {:italic true}}
                                     {:docs/from 0 :docs/to 1 :docs/style {:bold true}}])))))))
+
+(deftest a-link-is-a-place-or-it-is-not-a-link
+  ;; An allowlist and not a denylist. A document is rendered as HTML by the
+  ;; print page and by every preview, so a `javascript:` href in one is
+  ;; script running in the reader's session — and the question a writer can
+  ;; answer is not "is this one of the bad ones".
+  (is (= "https://example.com/a" (d/link {:link "https://example.com/a"})))
+  (is (= "http://example.com" (d/link {:link "http://example.com"})))
+  (is (= "mailto:a@example.com" (d/link {:link "mailto:a@example.com"})))
+  (is (= "HTTPS://EXAMPLE.COM" (d/link {:link "HTTPS://EXAMPLE.COM"}))
+      "the scheme is compared without case, and the URL is not rewritten")
+  (doseq [refused ["javascript:alert(1)" "JavaScript:alert(1)" "data:text/html,<script>"
+                   "vbscript:x" "file:///etc/passwd" "/relative/path" "example.com"
+                   "" "   " nil 42]]
+    (is (nil? (d/link {:link refused})) (pr-str refused)))
+  (is (nil? (d/link {})) "a run with no link at all"))

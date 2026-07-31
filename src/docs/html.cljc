@@ -56,10 +56,17 @@
   [b]
   (apply str
          (for [{:keys [docs/text docs/style]} (model/text-spans b)]
-           (reduce (fn [s [k el]]
-                     (if (get style k) (str "<" el ">" s "</" el ">") s))
-                   (esc text)
-                   run-elements))))
+           (let [marked (reduce (fn [s [k el]]
+                                  (if (get style k) (str "<" el ">" s "</" el ">") s))
+                                (esc text)
+                                run-elements)]
+             (if-let [url (model/link style)]
+               ;; `rel` on every one: a document is a thing people are sent,
+               ;; and the page it opens should not be handed a window
+               ;; object it can navigate back, nor this page's URL.
+               (str "<a href=\"" (esc url) "\" rel=\"noreferrer noopener\">"
+                    marked "</a>")
+               marked)))))
 
 (defn- block->html [b]
   (let [text (safe-runs b)]

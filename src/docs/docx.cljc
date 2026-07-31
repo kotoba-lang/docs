@@ -154,6 +154,25 @@
 
 ;; ── writing ─────────────────────────────────────────────────────────────────
 
+(defn- links
+  "Every followable link in the document, in order, as `{url rId}`.
+
+  Word puts an external link in the part's relationships and refers to it by
+  id from the body, so the ids have to be decided before either is written —
+  and both have to agree. Distinct URLs share one id: the same address
+  linked from three places is one relationship, which is what Word writes
+  itself.
+
+  `rId1` and `rId2` are the styles and the numbering, so these start at 3."
+  [doc]
+  (into {}
+        (map-indexed (fn [index url] [url (str "rId" (+ 3 index))])
+                     (distinct (for [b (:docs/blocks doc)
+                                     {:keys [docs/style]} (model/text-spans b)
+                                     :let [url (model/link style)]
+                                     :when url]
+                                 url)))))
+
 (defn- run
   "One `w:r`, the thing that actually holds text.
 
@@ -168,28 +187,51 @@
   `model/text-spans` now does for all three writers."
   ([text] (run text nil))
   ([text style]
-   (let [props (apply str (keep (fn [[k mark]] (when (get style k) mark)) run-marks))]
+   (let [;; The look of a link, written out rather than referring to a
+         ;; `Hyperlink` character style: this writer's `styles.xml` does not
+         ;; define one, and a `w:rStyle` naming a style that is not there is
+         ;; ignored, so the link would come out looking like body text.
+         linked (when (model/link style)
+                  "<w:color w:val=\"0563C1\"/><w:u w:val=\"single\"/>")
+         props (str (apply str (keep (fn [[k mark]] (when (get style k) mark)) run-marks))
+                    linked)]
      (str "<w:r>"
           (when (seq props) (str "<w:rPr>" props "</w:rPr>"))
           "<w:t xml:space=\"preserve\">" (ooxml/xml-esc (str text)) "</w:t></w:r>"))))
 
 (defn- runs
-  "Every `w:r` a block's text needs, styled where it is styled.
+  "Every `w:r` a block's text needs, styled and linked where it is.
 
   A block with no runs is one `w:r`, which is what every paragraph used to
   be — including an empty one, because a `w:p` with no run at all is a
   paragraph Word shows but cannot put a cursor in."
-  [b]
-  (let [spans (model/text-spans b)]
-    (if (empty? spans)
-      (run "")
-      (apply str (map (fn [{:keys [docs/text docs/style]}] (run text style)) spans)))))
+  ([b] (runs b {}))
+  ([b link-ids]
+   (let [spans (model/text-spans b)]
+     (if (empty? spans)
+       (run "")
+       (apply str
+              (map (fn [{:keys [docs/text docs/style]}]
+                     (let [written (run text style)
+                           id (get link-ids (model/link style))]
+                       ;; No id means the document was written without a
+                       ;; link table — a table cell, a list item — so the
+                       ;; text goes in unlinked rather than referring to a
+                       ;; relationship that is not in the part.
+                       (if id
+                         (str "<w:hyperlink r:id=\"" (ooxml/xml-esc id) "\">"
+                              written "</w:hyperlink>")
+                         written)))
+                   spans))))))
 
 (defn- para
   "One `w:p` with an optional style and numbering.
 
-  `body` is either text — a table cell, a list item, a line of code, none of
-  which carry runs — or the `w:r` elements a block's styled text came to."
+  `body` is the `w:r` elements, always. It used to take either text or runs
+  and decide by looking at the string, which held until a run was wrapped in
+  a `w:hyperlink` — the sniff said \"not markup\" and escaped the lot, so the
+  paragraph read `&lt;w:hyperlink…` in Word. A caller with text says so by
+  calling `run`."
   ([body] (para body nil nil))
   ([body style] (para body style nil))
   ([body style num-id]
@@ -199,7 +241,7 @@
                            "<w:numId w:val=\"" num-id "\"/></w:numPr>")))]
      (str "<w:p>"
           (when (seq props) (str "<w:pPr>" props "</w:pPr>"))
-          (if (str/starts-with? (str body) "<w:r") (str body) (run body))
+          body
           "</w:p>"))))
 
 (defn- table-xml
@@ -220,18 +262,18 @@
                               (for [cell (take width (concat row (repeat "")))]
                                 (str "<w:tc><w:tcPr><w:tcW w:w=\"0\" w:type=\"auto\"/>"
                                      "</w:tcPr>"
-                                     (para (str cell))
+                                     (para (run (str cell)))
                                      "</w:tc>")))
                        "</w:tr>")))
          "</w:tbl>")))
 
-(defn- block-xml [b]
+(defn- block-xml [b link-ids]
   (let [text (str (:docs/text b))
         ;; The runs for the kinds whose text can carry styling. `:code` is
         ;; not one: inside a code block a bold range is characters somebody
         ;; is reading, and the same reason keeps it out of the HTML writer's
         ;; `<pre>`.
-        styled (runs b)]
+        styled (runs b link-ids)]
     (case (:docs/kind b)
       :heading (para styled (str "Heading" (model/heading-level b)))
       :paragraph (para styled)
@@ -239,9 +281,9 @@
       ;; Each line its own paragraph: a `w:t` containing a newline shows the
       ;; newline as a space, so a code block written as one run arrives as
       ;; one long line.
-      :code (apply str (map #(para % (style-for :code))
+      :code (apply str (map #(para (run %) (style-for :code))
                             (str/split-lines (if (str/blank? text) " " text))))
-      :list (apply str (map #(para (str %) "ListParagraph"
+      :list (apply str (map #(para (run (str %)) "ListParagraph"
                                    (if (:docs/ordered? b) 2 1))
                             (:docs/items b)))
       :table (when (seq (:docs/rows b)) (table-xml (:docs/rows b)))
@@ -249,8 +291,8 @@
       ;; The same spelling Markdown uses, for the same reason: there is no
       ;; .docx for "a document in this Drive", so it becomes text that says
       ;; what it points at and reads back as the block it was.
-      (para (str "[" (name (:docs/kind b)) "](drive:" (:docs/target b) ")"))
-      (para text))))
+      (para (run (str "[" (name (:docs/kind b)) "](drive:" (:docs/target b) ")")))
+      (para (run text)))))
 
 (defn- styles-xml []
   (str "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
@@ -302,6 +344,7 @@
 
 (defn- document-xml [doc]
   (let [blocks (:docs/blocks doc)
+        link-ids (links doc)
         opens-with-h1? (and (seq blocks)
                             (= :heading (:docs/kind (first blocks)))
                             (= 1 (:docs/level (first blocks))))
@@ -313,8 +356,8 @@
          ;; out with the title twice, which is what a naive export does and
          ;; what a reader notices immediately.
          (when (and (not (str/blank? (str title))) (not opens-with-h1?))
-           (para title "Heading1"))
-         (apply str (keep block-xml blocks))
+           (para (run title) "Heading1"))
+         (apply str (keep #(block-xml % link-ids) blocks))
          ;; An empty body is a .docx Word opens and shows nothing in, which
          ;; is correct; a `w:sectPr` is what tells it the page size.
          "<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/>"
@@ -354,10 +397,16 @@
 
    "word/_rels/document.xml.rels"
    (ooxml/relationships-xml
-    [(ooxml/relationship {:id "rId1" :type (str rels-ns "/styles")
-                          :target "styles.xml"})
-     (ooxml/relationship {:id "rId2" :type (str rels-ns "/numbering")
-                          :target "numbering.xml"})])
+    (into [(ooxml/relationship {:id "rId1" :type (str rels-ns "/styles")
+                                :target "styles.xml"})
+           (ooxml/relationship {:id "rId2" :type (str rels-ns "/numbering")
+                                :target "numbering.xml"})]
+          ;; External, which is what makes Word treat the target as an
+          ;; address rather than as a part inside the package.
+          (map (fn [[url id]]
+                 (ooxml/relationship {:id id :type (str rels-ns "/hyperlink")
+                                      :target url :target-mode "External"}))
+               (links doc))))
 
    "word/document.xml" (document-xml doc)
    "word/styles.xml" (styles-xml)

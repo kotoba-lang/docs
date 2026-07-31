@@ -1,6 +1,6 @@
 (ns docs.html-test
   (:require [clojure.string :as str]
-            [clojure.test :refer [deftest is]]
+            [clojure.test :refer [deftest is testing]]
             [docs.html :as html]
             [docs.model :as d]))
 
@@ -97,3 +97,22 @@
                ;; The level that used to 500 all three writers.
                {:docs/blocks [{:docs/kind :heading :docs/level "two"}]}]]
     (is (string? (html/body doc)) (pr-str doc))))
+
+(deftest a-link-is-an-anchor-and-an-unfollowable-one-is-not
+  (let [para (fn [style] (-> (d/document "d" {:docs/title "T"})
+                             (d/add-block (d/add-text-style
+                                           (d/paragraph "p" "ここを見て") 0 2 style))
+                             html/body))]
+    (is (str/includes? (para {:link "https://example.com/?a=1&b=2"})
+                       (str "<a href=\"https://example.com/?a=1&amp;b=2\" "
+                            "rel=\"noreferrer noopener\">ここ</a>")))
+    (testing "with emphasis inside the anchor, not around it"
+      (is (str/includes? (para {:link "https://example.com" :bold true})
+                         "<a href=\"https://example.com\" rel=\"noreferrer noopener\"><strong>ここ</strong></a>")))
+    (testing "a scheme that is not a place is not written as one"
+      ;; The text stays; only the link goes. A document that lost the words
+      ;; because one of them had a bad href would be a worse answer.
+      (let [out (para {:link "javascript:alert(1)"})]
+        (is (not (str/includes? out "<a ")))
+        (is (not (str/includes? out "javascript")))
+        (is (str/includes? out "ここを見て"))))))
