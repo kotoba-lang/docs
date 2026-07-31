@@ -374,3 +374,21 @@
         (is (not (str/includes? (get bad-files "word/_rels/document.xml.rels")
                                 "javascript")))
         (is (seq (docx/unexpressed bad)) "and it is reported rather than silently gone")))))
+
+(deftest a-picture-does-not-reach-word-and-says-so
+  ;; Word carries a picture as a w:drawing referring to a media part. It is
+  ;; not written because it could not be checked — nothing on the machine
+  ;; this was written on opens a .docx — and XML that is probably right is
+  ;; worse than a loss that is certainly reported.
+  (let [png "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII="
+        doc (-> (d/document "d" {:docs/title "T"})
+                (d/add-block (d/image "i" png {:docs/alt "売上の図"})))
+        [entry] (docx/unexpressed doc)
+        xml (get (docx/docx-files doc) "word/document.xml")]
+    (is (= :docx/image-dropped (:docs/code entry)))
+    (is (= "i" (:docs/id entry)))
+    (is (= :info (:docs/severity entry)))
+    ;; The alternative text goes in, so the document does not lose the fact
+    ;; that there was a picture and what it was of.
+    (is (str/includes? xml "［画像：売上の図］"))
+    (is (not (str/includes? xml png)))))

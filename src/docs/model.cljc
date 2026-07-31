@@ -1,7 +1,9 @@
 (ns docs.model
   (:require [clojure.string :as str]))
 
-(def block-kinds #{:heading :paragraph :quote :code :list :table :table-ref :file-ref :deck-ref})
+(def block-kinds
+  #{:heading :paragraph :quote :code :list :table :image
+    :table-ref :file-ref :deck-ref})
 
 (defn document
   ([id] (document id {}))
@@ -122,6 +124,44 @@
                     usable)]
         (cond-> spans
           (< at n) (conj {:docs/text (subs text at n)}))))))
+
+(def image-media-types
+  "The picture formats a document may carry, and what they are called.
+
+  An allowlist, like the link schemes: the bytes end up in an `<img src>`
+  and in a Word media part, and a media type nobody checked is a media type
+  a browser will sniff. SVG is not among them — it is a document that can
+  carry script, and an `<img>` is where a reader would least expect one."
+  {"image/png" "png" "image/jpeg" "jpg" "image/gif" "gif" "image/webp" "webp"})
+
+(defn image
+  "A picture in the document.
+
+  `image-data` is base64, the same way `slides.model/image` carries one:
+  portable across hosts and EDN- and JSON-safe, where a byte array is
+  neither. The document travels whole — into a `.docx`, into an EDN export
+  — with no second place the bytes live and nothing to re-resolve later.
+
+  `:docs/alt` is not decoration. A picture with no alternative text is a
+  hole in the document for anyone reading it aloud, so `unexpressed` and
+  the validator both have something to say about one that is missing."
+  ([id image-data] (image id image-data {}))
+  ([id image-data attrs]
+   (merge {:docs/id id
+           :docs/kind :image
+           :docs/image-data image-data
+           :docs/media-type "image/png"
+           :docs/alt ""}
+          attrs)))
+
+(defn image-data
+  "A block's picture as `[media-type base64]`, or nil when it is not one to
+  draw — no bytes, or a media type this does not carry."
+  [b]
+  (let [media (str (:docs/media-type b))
+        data (str/trim (str (:docs/image-data b)))]
+    (when (and (seq data) (contains? image-media-types media))
+      [media data])))
 
 (defn ref-block [kind id target]
   (block kind id {:docs/target target}))

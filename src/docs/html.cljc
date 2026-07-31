@@ -74,6 +74,14 @@
       :heading (let [level (model/heading-level b)]
                  (str "<h" level ">" text "</h" level ">"))
       :paragraph (str "<p>" text "</p>")
+      ;; A data URI, because the bytes are in the block: one document, one
+      ;; file, nothing to fetch and nothing that can 404 later. `alt` is
+      ;; always written, empty when there is none, because an `<img>` with
+      ;; no `alt` attribute at all is read aloud as its file name.
+      :image (if-let [[media data] (model/image-data b)]
+               (str "<figure><img src=\"data:" (esc media) ";base64," (esc data)
+                    "\" alt=\"" (esc (str (:docs/alt b))) "\"/></figure>")
+               "")
       :quote (str "<blockquote><p>" text "</p></blockquote>")
       ;; `<pre>` holds the raw text, not the run-marked one: inside a
       ;; preformatted block a `<strong>` is markup somebody is reading, not
