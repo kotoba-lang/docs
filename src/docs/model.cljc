@@ -1,4 +1,5 @@
-(ns docs.model)
+(ns docs.model
+  (:require [clojure.string :as str]))
 
 (def block-kinds #{:heading :paragraph :quote :code :list :table :table-ref :file-ref :deck-ref})
 
@@ -48,6 +49,32 @@
           {:docs/from from
            :docs/to to
            :docs/style style}))
+
+(def link-schemes
+  "The URL schemes a link in a document may use.
+
+  An allowlist and not a denylist. A document is a thing people are sent, it
+  is rendered as HTML by the print page and by every preview, and a
+  `javascript:` href in one of those is script running in the reader's
+  session — so the question a writer has to answer is not \"is this one of
+  the bad ones\" but \"is this one of the three I know are a place\".
+
+  Here rather than in each writer because all of them have to agree: a link
+  HTML refuses and Word follows is worse than either answer on its own."
+  #{"http" "https" "mailto"})
+
+(defn link
+  "A run's link, when it is one that may be followed, or nil.
+
+  Nil for anything else — no scheme, an unknown scheme, a non-string —
+  rather than a cleaned-up version of it. There is no safe rewriting of
+  `javascript:alert(1)` into a place, and a writer that emitted it without
+  a scheme would produce a relative link to a file named after the script."
+  [style]
+  (let [url (str/trim (str (:link style)))
+        scheme (second (re-find #"^([A-Za-z][A-Za-z0-9+.-]*):" url))]
+    (when (and (seq url) scheme (contains? link-schemes (str/lower-case scheme)))
+      url)))
 
 (defn text-spans
   "A block's text cut into pieces, each with the style that covers it.

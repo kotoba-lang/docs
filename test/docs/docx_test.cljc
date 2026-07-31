@@ -344,3 +344,33 @@
             xml (get (docx/docx-files mixed) "word/document.xml")]
         (is (str/includes? xml "<w:b/>") "the part Word has is written")
         (is (= 1 (count (docx/unexpressed mixed))))))))
+
+(deftest a-link-becomes-an-external-relationship-word-can-follow
+  (let [doc (-> (d/document "d" {:docs/title "T"})
+                (d/add-block (d/add-text-style (d/paragraph "p" "ここを見て") 0 2
+                                               {:link "https://example.com/a"}))
+                (d/add-block (d/add-text-style (d/paragraph "q" "同じ先へ") 0 2
+                                               {:link "https://example.com/a"})))
+        files (docx/docx-files doc)
+        xml (get files "word/document.xml")
+        rels (get files "word/_rels/document.xml.rels")]
+    (is (str/includes? xml "<w:hyperlink r:id=\"rId3\">"))
+    (is (str/includes? rels "Id=\"rId3\""))
+    (is (str/includes? rels "Target=\"https://example.com/a\""))
+    (is (str/includes? rels "TargetMode=\"External\""))
+    ;; The same address from two places is one relationship, which is what
+    ;; Word writes itself — and rId4 would be a relationship nothing refers
+    ;; to.
+    (is (= 1 (count (re-seq #"hyperlink" rels))) rels)
+    (is (= 2 (count (re-seq #"<w:hyperlink" xml))))
+    (testing "and it looks like a link, since this styles.xml has no Hyperlink style"
+      (is (str/includes? xml "<w:color w:val=\"0563C1\"/><w:u w:val=\"single\"/>")))
+    (testing "a scheme that is not a place gets no relationship and no anchor"
+      (let [bad (-> (d/document "d" {:docs/title "T"})
+                    (d/add-block (d/add-text-style (d/paragraph "p" "ここ") 0 2
+                                                   {:link "javascript:alert(1)"})))
+            bad-files (docx/docx-files bad)]
+        (is (not (str/includes? (get bad-files "word/document.xml") "w:hyperlink")))
+        (is (not (str/includes? (get bad-files "word/_rels/document.xml.rels")
+                                "javascript")))
+        (is (seq (docx/unexpressed bad)) "and it is reported rather than silently gone")))))

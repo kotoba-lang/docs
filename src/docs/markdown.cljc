@@ -52,7 +52,7 @@
   `:code` last, because it is the one whose content is literal — a run that
   is both bold and code would otherwise get its `**` inside the backticks,
   where Markdown shows the asterisks rather than the emphasis."
-  [:bold :italic :code])
+  [:bold :italic :code :link])
 
 (defn unexpressed
   "What `write` will drop from this document, one entry per thing.
@@ -76,9 +76,18 @@
       (for [b (:docs/blocks doc)
             run (:docs/text-runs b)
             [k _] (:docs/style run)
-            :when (not (some #{k} expressible-styles))]
+            ;; `:link` is spellable only when it is a link. Adding it to
+            ;; `expressible-styles` made every link expressible, including
+            ;; the `javascript:` one this writer drops — which turned a
+            ;; reported loss into a silent one, the same way it did in the
+            ;; docx writer an hour earlier.
+            :when (if (= :link k)
+                    (nil? (model/link (:docs/style run)))
+                    (not (some #{k} expressible-styles)))]
         (entry :markdown/style-dropped (:docs/id b)
-               (str "Markdown has no spelling for " k)))
+               (if (= :link k)
+                 "Markdown has no spelling for a link that is not a place"
+                 (str "Markdown has no spelling for " k))))
       (for [b (:docs/blocks doc)
             :when (contains? #{:table-ref :file-ref :deck-ref} (:docs/kind b))]
         (entry :markdown/reference-is-a-link (:docs/id b)
@@ -102,6 +111,20 @@
                     (max 1 (min 6 (:docs/level b))))))))))
 
 ;; ── writing ─────────────────────────────────────────────────────────────────
+
+(defn- link-wrap
+  "`[text](url)`, or the text when the link is not one to follow.
+
+  Angle brackets when the URL holds a bracket or a space: `[a](b(c))`
+  closes at the first `)`, so the link would be `b(c` and the rest would be
+  text. Markdown's own answer to that is `<>`, and using it always would
+  mean every ordinary link carried them."
+  [text style]
+  (if-let [url (model/link style)]
+    (str "[" text "]("
+         (if (re-find #"[()\s]" url) (str "<" url ">") url)
+         ")")
+    text))
 
 (defn- style-wrap
   "The Markdown around a run of text carrying `style`.
@@ -130,7 +153,11 @@
   into pieces."
   [b]
   (apply str (map (fn [{:keys [docs/text docs/style]}]
-                    (if style (style-wrap text style) text))
+                    ;; The link outside the emphasis: `[**a**](url)` is a
+                    ;; bold link and `**[a](url)**` is a bold thing that
+                    ;; happens to be one, and only the first is what a run
+                    ;; carrying both means.
+                    (if style (link-wrap (style-wrap text style) style) text))
                   (model/text-spans b))))
 
 (defn- escape-cell
