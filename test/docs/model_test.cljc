@@ -114,3 +114,45 @@
                    "" "   " nil 42]]
     (is (nil? (d/link {:link refused})) (pr-str refused)))
   (is (nil? (d/link {})) "a run with no link at all"))
+
+(def ^:private tiny-png
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=")
+
+(deftest a-picture-is-a-block-and-its-bytes-travel-with-it
+  ;; The same way `slides.model/image` carries one: base64, because a byte
+  ;; array is neither EDN- nor JSON-safe and this document is both.
+  (let [b (d/image "i" tiny-png {:docs/alt "図"})]
+    (is (= :image (:docs/kind b)))
+    (is (= ["image/png" tiny-png] (d/image-data b)))
+    (is (contains? d/block-kinds :image) "and the validator knows the kind"))
+  (testing "a media type this does not carry is not a picture to draw"
+    ;; An allowlist, like the link schemes. SVG is not on it: it is a
+    ;; document that can carry script, and an <img> is where a reader would
+    ;; least expect one.
+    (doseq [refused ["image/svg+xml" "text/html" "" nil "image/PNG"]]
+      (is (nil? (d/image-data (d/image "i" tiny-png {:docs/media-type refused})))
+          (pr-str refused))))
+  (testing "and neither is one with no bytes"
+    (is (nil? (d/image-data (d/image "i" "  "))))))
+
+(deftest a-picture-nobody-can-draw-or-read-aloud-is-reported
+  (let [problems (fn [b] (set (map :docs/code
+                                   (v/problems (d/add-block (d/document "d" {}) b)))))]
+    (is (contains? (problems (d/image "i" "")) :image/undrawable))
+    (is (contains? (problems (d/image "i" tiny-png)) :image/no-alt-text))
+    (is (= #{} (problems (d/image "i" tiny-png {:docs/alt "図"}))))))
+
+(deftest a-picture-survives-the-plain-json-projection
+  ;; The projection turns keywords into strings and back, and a block's
+  ;; unknown keys pass through — so this is the assertion that the bytes and
+  ;; the media type really do, rather than the assumption.
+  (let [doc (d/add-block (d/document "d" {:docs/title "T"})
+                         (d/image "i" tiny-png {:docs/alt "図"}))
+        back (wire/rehydrate-document (wire/read-document-envelope
+                                       (:body (wire/document-envelope doc))))
+        b (first (:docs/blocks back))]
+    (is (= :image (:docs/kind b)))
+    (is (= tiny-png (:docs/image-data b)))
+    (is (= "image/png" (:docs/media-type b)))
+    (is (= "図" (:docs/alt b)))
+    (is (= ["image/png" tiny-png] (d/image-data b)) "and it is still drawable")))

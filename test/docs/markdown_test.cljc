@@ -215,3 +215,13 @@
         (is (not (str/includes? (md/write doc) "javascript")))
         (is (= [:markdown/style-dropped]
                (mapv :docs/code (md/unexpressed doc))))))))
+
+(deftest a-picture-travels-as-a-data-uri
+  (let [png "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII="
+        out (md/write (d/add-block (d/document "d" {:docs/title "T"})
+                                   (d/image "i" png {:docs/alt "図"})))]
+    (is (str/includes? out (str "![図](data:image/png;base64," png ")")))
+    (testing "brackets in the alt text would close the label early"
+      (is (str/includes? (md/write (d/add-block (d/document "d" {:docs/title "T"})
+                                                (d/image "i" png {:docs/alt "a[b]c"})))
+                         "![abc](data:")))))

@@ -116,3 +116,17 @@
         (is (not (str/includes? out "<a ")))
         (is (not (str/includes? out "javascript")))
         (is (str/includes? out "ここを見て"))))))
+
+(deftest a-picture-is-an-img-with-the-bytes-in-it
+  (let [png "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII="
+        out (one (d/image "i" png {:docs/alt "売上の図"}))]
+    (is (str/includes? out (str "<img src=\"data:image/png;base64," png "\"")))
+    (is (str/includes? out "alt=\"売上の図\""))
+    (is (str/includes? out "<figure>"))
+    (testing "alt is written even when there is none"
+      ;; An <img> with no alt attribute at all is read aloud as its file
+      ;; name; an empty one is read as decoration, which is the honest
+      ;; answer when nobody said what it is.
+      (is (str/includes? (one (d/image "i" png)) "alt=\"\"")))
+    (testing "and a picture nothing can draw draws nothing"
+      (is (= "" (one (d/image "i" "" {:docs/alt "x"})))))))

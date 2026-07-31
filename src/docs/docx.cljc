@@ -133,6 +133,10 @@
                  :else (str (str/join "・" (map name unspellable))
                             " は Word に書き出せません。"))))
       (for [b (:docs/blocks doc)
+            :when (= :image (:docs/kind b))]
+        (entry :docx/image-dropped (:docs/id b)
+               "画像は書き出されません。代替テキストが本文に入ります。"))
+      (for [b (:docs/blocks doc)
             :when (contains? #{:table-ref :file-ref :deck-ref} (:docs/kind b))]
         (entry :docx/reference-becomes-text (:docs/id b)
                (str (name (:docs/kind b))
@@ -277,6 +281,18 @@
     (case (:docs/kind b)
       :heading (para styled (str "Heading" (model/heading-level b)))
       :paragraph (para styled)
+      ;; The alternative text, as a paragraph, and `unexpressed` says the
+      ;; picture did not travel.
+      ;;
+      ;; Word carries a picture as a `w:drawing` wrapping DrawingML that
+      ;; refers to a media part — the same shape `slides.pptx` writes for a
+      ;; `p:pic`, in a different wrapper. It is not written here because it
+      ;; could not be checked: nothing on the machine this was written on
+      ;; opens a .docx, so the choice was between XML that is probably right
+      ;; and a loss that is certainly reported. A picture that quietly fails
+      ;; to open is worse than one Word never had.
+      :image (para (run (let [alt (str (:docs/alt b))]
+                          (if (str/blank? alt) "［画像］" (str "［画像：" alt "］")))))
       :quote (para styled (style-for :quote))
       ;; Each line its own paragraph: a `w:t` containing a newline shows the
       ;; newline as a space, so a code block written as one run arrives as

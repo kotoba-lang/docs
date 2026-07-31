@@ -183,6 +183,15 @@
     (case (:docs/kind b)
       :heading (str (apply str (repeat (model/heading-level b) "#")) " " text)
       :paragraph text
+      ;; A data URI, which Markdown has no other way to carry a picture
+      ;; that lives in the document. It is large — base64 is four characters
+      ;; per three bytes — and some renderers refuse data URIs, but the
+      ;; alternative is emitting a link to a file that does not exist, and a
+      ;; picture that silently becomes nothing is the worse of the two.
+      :image (if-let [[media data] (model/image-data b)]
+               (str "![" (str/replace (str (:docs/alt b)) #"[\[\]]" "") "]"
+                    "(data:" media ";base64," data ")")
+               "")
       :quote (->> (str/split-lines (if (str/blank? text) " " text))
                   (map #(str "> " %))
                   (str/join "\n"))

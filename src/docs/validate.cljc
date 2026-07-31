@@ -1,5 +1,6 @@
 (ns docs.validate
-  (:require [docs.model :as model]))
+  (:require [clojure.string :as str]
+            [docs.model :as model]))
 
 (defn problem [severity code id msg]
   {:docs/severity severity :docs/code code :docs/id id :docs/msg msg})
@@ -23,6 +24,20 @@
                       (neg? (:docs/from run))
                       (< (:docs/to run) (:docs/from run)))]
         (problem :error :text-run/invalid (:docs/id b) "invalid text run range"))
+      ;; A picture nothing can draw. Not a broken document — the block is
+      ;; still a block and the rest of it is fine — but every writer will
+      ;; skip it, and a reader who put a photograph in and got nothing back
+      ;; should be told which one.
+      (for [b (:docs/blocks doc)
+            :when (and (= :image (:docs/kind b)) (nil? (model/image-data b)))]
+        (problem :warning :image/undrawable (:docs/id b)
+                 "image has no data, or a media type this does not carry"))
+      (for [b (:docs/blocks doc)
+            :when (and (= :image (:docs/kind b))
+                       (model/image-data b)
+                       (str/blank? (str (:docs/alt b))))]
+        (problem :warning :image/no-alt-text (:docs/id b)
+                 "image has no alternative text"))
       (for [comment (:docs/comments doc)
             :when (or (nil? (:docs/id comment))
                       (nil? (:docs/anchor comment)))]
