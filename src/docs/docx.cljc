@@ -41,7 +41,7 @@
   paragraph for that reason: taking the first would truncate most real
   documents to their first few characters."
   (:refer-clojure :exclude [read])
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [docs.model :as model]
             [ooxml.core :as ooxml]
             [xml.parse :as xml])

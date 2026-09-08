@@ -1,5 +1,5 @@
 (ns docs.validate
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [docs.model :as model]))
 
 (defn problem [severity code id msg]

@@ -19,7 +19,7 @@
   invention. Comments and suggestions are not text in the document.
   And a run style HTML has no element for is dropped rather than guessed
   at — `<strong>`, `<em>` and `<code>` are what there is."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [docs.model :as model]))
 
 (defn esc

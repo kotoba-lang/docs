@@ -1,6 +1,6 @@
 (ns docs.docx-test
   (:refer-clojure :exclude [read])
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.test :refer [deftest is testing]]
             [docs.docx :as docx]
             [docs.model :as d]
