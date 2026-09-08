@@ -41,7 +41,7 @@
   and the validator is what reports a document it cannot accept. A parser
   that threw would turn a bad paste into a 500."
   (:refer-clojure :exclude [read])
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [docs.model :as model]))
 
 ;; ── what Markdown cannot carry ──────────────────────────────────────────────

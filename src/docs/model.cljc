@@ -1,5 +1,5 @@
 (ns docs.model
-  (:require [clojure.string :as str]))
+  (:require [kotoba.lang.text :as str]))
 
 (def block-kinds
   #{:heading :paragraph :quote :code :list :table :image
@@ -75,7 +75,7 @@
   [style]
   (let [url (str/trim (str (:link style)))
         scheme (second (re-find #"^([A-Za-z][A-Za-z0-9+.-]*):" url))]
-    (when (and (seq url) scheme (contains? link-schemes (str/lower-case scheme)))
+    (when (and (seq url) scheme (contains? link-schemes (str/lower scheme)))
       url)))
 
 (defn text-spans
