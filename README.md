@@ -112,8 +112,8 @@ Markdown — so `read` regenerates them.
 ## Test
 
 ```bash
-clojure -M:test                                                       # JVM
-nbb --classpath "src:test:$(clojure -Spath)" scripts/test-cljs.cljk   # ClojureScript
+kbb -M:test                                                       # JVM
+kbb --backend sci --classpath "src:test:$(kbb -Spath)" scripts/test-cljs.cljk   # ClojureScript
 ```
 
 Run both. `docs.markdown` is regular expressions and string surgery, which is
