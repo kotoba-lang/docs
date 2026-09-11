@@ -1,4 +1,4 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; The same test namespaces, on the other host.
 ;;
 ;; `docs.markdown` is regular expressions and string surgery, which is where
@@ -6,7 +6,7 @@
 ;; semantics of a `$1` replacement. A `.cljc` library that only ever runs on
 ;; one host is a `.clj` library with extra reader conditionals.
 ;;
-;;   nbb --classpath "src:test:$(clojure -Spath)" scripts/test-cljs.cljk
+;;   kbb --backend sci --classpath "src:test:$(kbb -Spath)" scripts/test-cljs.cljk
 
 (require '[clojure.test :as t]
          'docs.docx-test
