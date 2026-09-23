@@ -1,7 +1,7 @@
 (ns docs.markdown-test
   (:refer-clojure :exclude [read])
   (:require [kotoba.lang.text :as str]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [docs.markdown :as md]
             [docs.model :as d]
             [docs.validate :as v]))
