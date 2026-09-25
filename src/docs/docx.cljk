@@ -41,7 +41,7 @@
   paragraph for that reason: taking the first would truncate most real
   documents to their first few characters."
   (:refer-clojure :exclude [read])
-  (:require [kotoba.lang.text :as str]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.text :as str]
             [docs.model :as model]
             [ooxml.core :as ooxml]
             [xml.parse :as xml])
@@ -439,7 +439,7 @@
        (with-open [zip (ZipOutputStream. out)]
          (doseq [[path text] (sort (docx-files doc))]
            (.putNextEntry zip (ZipEntry. ^String path))
-           (.write zip (.getBytes ^String text "UTF-8"))
+           (.write zip (kbytes/utf8-bytes ^String text))
            (.closeEntry zip)))
        (.toByteArray out))))
 
@@ -626,7 +626,7 @@
              (loop []
                (let [n (.read zip buf)]
                  (when (pos? n) (.write out buf 0 n) (recur))))
-             (recur (assoc acc (.getName entry) (String. (.toByteArray out) "UTF-8"))))
+             (recur (assoc acc (.getName entry) (kbytes/utf8-string (.toByteArray out)))))
            acc)))))
 
 #?(:clj
